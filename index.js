@@ -18,7 +18,8 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildPresences
   ]
 });
 
@@ -29,7 +30,6 @@ client.once("ready", () => {
 // ================= TRANSCRIPT =================
 async function createTranscript(channel) {
   const messages = await channel.messages.fetch({ limit: 100 });
-
   const sorted = [...messages.values()].reverse();
 
   let transcript = `📜 GVBA HQ TRANSCRIPT\nChannel: ${channel.name}\n\n`;
@@ -40,6 +40,24 @@ async function createTranscript(channel) {
   }
 
   return transcript;
+}
+
+// ================= PICK AVAILABLE STAFF =================
+async function pickAvailableRoyalty(guild) {
+  const members = await guild.members.fetch();
+
+  const eligible = members.filter(m => {
+    const hasRole = m.roles.cache.has(ROYALTY_ROLE_ID);
+    if (!hasRole) return false;
+
+    const status = m.presence?.status;
+    return status === "online" || status === "idle";
+  });
+
+  if (eligible.size === 0) return null;
+
+  const array = [...eligible.values()];
+  return array[Math.floor(Math.random() * array.length)];
 }
 
 // ================= TEXT COMMANDS =================
@@ -108,7 +126,7 @@ client.on("interactionCreate", async (interaction) => {
     });
 
     await channel.send({
-      content: `🎫 Welcome ${user}. A Royalty member will assist you soon.`,
+      content: `🎫 Welcome ${user}. Ticket created. Staff will join soon.`,
       components: [
         new ActionRowBuilder().addComponents(
           new ButtonBuilder()
@@ -119,18 +137,34 @@ client.on("interactionCreate", async (interaction) => {
       ]
     });
 
+    // ================= DELAYED STAFF ASSIGN (5 MIN) =================
+    setTimeout(async () => {
+      const staff = await pickAvailableRoyalty(guild);
+
+      if (staff) {
+        await channel.permissionOverwrites.edit(staff.id, {
+          ViewChannel: true,
+          SendMessages: true,
+          ReadMessageHistory: true
+        });
+
+        await channel.send(`🪖 Assigned Staff (delayed): ${staff.user.tag}`);
+      } else {
+        await channel.send("⚠️ No Royalty staff available after 5 minutes.");
+      }
+    }, 5 * 60 * 1000);
+
     return interaction.reply({
       content: `✅ Ticket created: ${channel}`,
       ephemeral: true
     });
   }
 
-  // ================= CLOSE TICKET (ROYALTY ONLY) =================
+  // ================= CLOSE TICKET =================
   if (interaction.customId === "close_ticket") {
 
     const member = interaction.member;
 
-    // 🔒 ROLE CHECK
     if (!member.roles.cache.has(ROYALTY_ROLE_ID)) {
       return interaction.reply({
         content: "⛔ Only Royalty Team can close tickets.",
@@ -140,50 +174,31 @@ client.on("interactionCreate", async (interaction) => {
 
     const channel = interaction.channel;
 
-    await interaction.reply({
-      content: "📊 Type result: Passed / Failed / Other",
-      ephemeral: true
-    });
-
-    const filter = m => m.author.id === interaction.user.id;
-
-    const collected = await channel.awaitMessages({
-      filter,
-      max: 1,
-      time: 30000
-    }).catch(() => null);
-
-    let result = "Other";
-
-    if (collected && collected.first()) {
-      result = collected.first().content;
-    }
-
-    // 📜 TRANSCRIPT
     const messages = await channel.messages.fetch({ limit: 100 });
     const sorted = [...messages.values()].reverse();
 
-    let transcript = `📜 GVBA HQ REPORT\nChannel: ${channel.name}\nResult: ${result}\n\n`;
+    let transcript = `📜 GVBA HQ TRANSCRIPT\nChannel: ${channel.name}\n\n`;
 
     for (const msg of sorted) {
       if (msg.author.bot) continue;
       transcript += `[${msg.author.tag}] ${msg.content}\n`;
     }
 
-    const logChannel = interaction.guild.channels.cache.get(TRANSCRIPT_CHANNEL_ID);
+    const logChannel = guild.channels.cache.get(TRANSCRIPT_CHANNEL_ID);
 
     if (logChannel) {
       await logChannel.send({
         content:
 `📜 **HQ TICKET CLOSED**
 Channel: ${channel.name}
-Result: **${result}**
 
 \`\`\`
 ${transcript.slice(0, 1900)}
 \`\`\``
       });
     }
+
+    await interaction.reply("❌ Closing ticket...");
 
     setTimeout(() => {
       channel.delete().catch(() => {});
