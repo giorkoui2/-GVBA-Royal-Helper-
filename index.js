@@ -32,13 +32,11 @@ async function createTranscript(channel) {
 
   const sorted = [...messages.values()].reverse();
 
-  let transcript = `📜 FULL TICKET TRANSCRIPT\nChannel: ${channel.name}\n\n`;
+  let transcript = `📜 GVBA HQ TRANSCRIPT\nChannel: ${channel.name}\n\n`;
 
   for (const msg of sorted) {
     if (msg.author.bot) continue;
-
-    const time = new Date(msg.createdTimestamp).toLocaleString();
-    transcript += `[${time}] ${msg.author.tag}: ${msg.content}\n`;
+    transcript += `[${msg.author.tag}] ${msg.content}\n`;
   }
 
   return transcript;
@@ -86,7 +84,7 @@ client.on("interactionCreate", async (interaction) => {
   const guild = interaction.guild;
   const user = interaction.user;
 
-  // ================= OPEN TICKET =================
+  // ================= CREATE TICKET =================
   if (interaction.customId.startsWith("ticket_")) {
 
     const channel = await guild.channels.create({
@@ -110,7 +108,7 @@ client.on("interactionCreate", async (interaction) => {
     });
 
     await channel.send({
-      content: `🎫 Welcome ${user}. Staff will assist you soon.`,
+      content: `🎫 Welcome ${user}. A Royalty member will assist you soon.`,
       components: [
         new ActionRowBuilder().addComponents(
           new ButtonBuilder()
@@ -127,26 +125,65 @@ client.on("interactionCreate", async (interaction) => {
     });
   }
 
-  // ================= CLOSE TICKET =================
+  // ================= CLOSE TICKET (ROYALTY ONLY) =================
   if (interaction.customId === "close_ticket") {
+
+    const member = interaction.member;
+
+    // 🔒 ROLE CHECK
+    if (!member.roles.cache.has(ROYALTY_ROLE_ID)) {
+      return interaction.reply({
+        content: "⛔ Only Royalty Team can close tickets.",
+        ephemeral: true
+      });
+    }
+
     const channel = interaction.channel;
 
-    const transcript = await createTranscript(channel);
+    await interaction.reply({
+      content: "📊 Type result: Passed / Failed / Other",
+      ephemeral: true
+    });
+
+    const filter = m => m.author.id === interaction.user.id;
+
+    const collected = await channel.awaitMessages({
+      filter,
+      max: 1,
+      time: 30000
+    }).catch(() => null);
+
+    let result = "Other";
+
+    if (collected && collected.first()) {
+      result = collected.first().content;
+    }
+
+    // 📜 TRANSCRIPT
+    const messages = await channel.messages.fetch({ limit: 100 });
+    const sorted = [...messages.values()].reverse();
+
+    let transcript = `📜 GVBA HQ REPORT\nChannel: ${channel.name}\nResult: ${result}\n\n`;
+
+    for (const msg of sorted) {
+      if (msg.author.bot) continue;
+      transcript += `[${msg.author.tag}] ${msg.content}\n`;
+    }
 
     const logChannel = interaction.guild.channels.cache.get(TRANSCRIPT_CHANNEL_ID);
 
     if (logChannel) {
       await logChannel.send({
         content:
-`📜 **Ticket Closed: ${channel.name}**
+`📜 **HQ TICKET CLOSED**
+Channel: ${channel.name}
+Result: **${result}**
 
 \`\`\`
 ${transcript.slice(0, 1900)}
 \`\`\``
       });
     }
-
-    await interaction.reply("❌ Closing ticket...");
 
     setTimeout(() => {
       channel.delete().catch(() => {});
